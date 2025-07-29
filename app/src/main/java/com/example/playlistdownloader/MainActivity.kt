@@ -9,12 +9,15 @@ import android.os.Environment
 import android.provider.DocumentsContract
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
@@ -23,9 +26,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var folderButton: Button
     private lateinit var statusText: TextView
     private lateinit var folderPathText: TextView
+    private lateinit var progressBar: ProgressBar
     
     private var selectedFolderUri: Uri? = null
     private var selectedFolderPath: String = ""
+    private lateinit var downloadService: DownloadService
 
     private val folderPickerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -54,6 +59,10 @@ class MainActivity : AppCompatActivity() {
         folderButton = findViewById(R.id.folderButton)
         statusText = findViewById(R.id.statusText)
         folderPathText = findViewById(R.id.folderPathText)
+        progressBar = findViewById(R.id.progressBar)
+        
+        // Initialize download service
+        downloadService = DownloadService()
 
         // Set default download folder
         val defaultPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
@@ -114,11 +123,58 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startDownload(url: String) {
-        statusText.text = "Starting download...\nURL: $url\nFolder: $selectedFolderPath"
-        Toast.makeText(this, "Download started!", Toast.LENGTH_SHORT).show()
+        downloadButton.isEnabled = false
+        progressBar.visibility = ProgressBar.VISIBLE
+        statusText.text = "Analyzing playlist..."
         
-        // TODO: Implement actual download logic here
-        // This is where you'd integrate with yt-dlp or similar
+        lifecycleScope.launch {
+            try {
+                // Get playlist info
+                val playlistInfo = downloadService.getPlaylistInfo(url)
+                statusText.text = "Found ${playlistInfo.videos.size} videos in '${playlistInfo.title}'"
+                
+                var downloadedCount = 0
+                val totalVideos = playlistInfo.videos.size
+                
+                // Download each video
+                for ((index, video) in playlistInfo.videos.withIndex()) {
+                    statusText.text = "Downloading ${index + 1}/$totalVideos: ${video.title}"
+                    
+                    val success = downloadService.downloadVideo(
+                        video,
+                        selectedFolderPath
+                    ) { progress ->
+                        runOnUiThread {
+                            progressBar.progress = progress
+                        }
+                    }
+                    
+                    if (success) {
+                        downloadedCount++
+                    }
+                    
+                    runOnUiThread {
+                        statusText.text = "Downloaded $downloadedCount/$totalVideos videos"
+                    }
+                }
+                
+                // Download complete
+                runOnUiThread {
+                    progressBar.visibility = ProgressBar.GONE
+                    downloadButton.isEnabled = true
+                    statusText.text = "Download complete! $downloadedCount/$totalVideos videos downloaded to:\n$selectedFolderPath"
+                    Toast.makeText(this@MainActivity, "Download complete!", Toast.LENGTH_LONG).show()
+                }
+                
+            } catch (e: Exception) {
+                runOnUiThread {
+                    progressBar.visibility = ProgressBar.GONE
+                    downloadButton.isEnabled = true
+                    statusText.text = "Error: ${e.message}"
+                    Toast.makeText(this@MainActivity, "Download failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun checkStoragePermission() {

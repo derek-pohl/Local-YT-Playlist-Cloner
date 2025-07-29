@@ -122,6 +122,15 @@
                 android:textStyle="bold"
                 android:layout_marginBottom="8dp" />
 
+            <ProgressBar
+                android:id="@+id/progressBar"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_marginBottom="12dp"
+                android:visibility="gone"
+                android:progressTint="#6c5ce7" />
+
             <TextView
                 android:id="@+id/statusText"
                 android:layout_width="match_parent"
