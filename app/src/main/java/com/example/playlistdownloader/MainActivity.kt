@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.provider.DocumentsContract
+import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ProgressBar
@@ -17,20 +18,28 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import kotlinx.coroutines.launch
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
     private lateinit var urlInput: EditText
     private lateinit var downloadButton: Button
+    private lateinit var trackButton: Button
     private lateinit var folderButton: Button
     private lateinit var statusText: TextView
     private lateinit var folderPathText: TextView
     private lateinit var progressBar: ProgressBar
+    private lateinit var trackedPlaylistsRecycler: RecyclerView
+    private lateinit var noPlaylistsText: TextView
     
     private var selectedFolderUri: Uri? = null
     private var selectedFolderPath: String = ""
     private lateinit var downloadService: DownloadService
+    private lateinit var playlistTracker: PlaylistTracker
+    private lateinit var playlistAdapter: TrackedPlaylistAdapter
+    private val syncProgressMap = mutableMapOf<String, PlaylistSyncProgress>()
 
     private val folderPickerLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -46,6 +55,7 @@ class MainActivity : AppCompatActivity() {
                 selectedFolderPath = path
                 folderPathText.text = "Download folder: $path"
                 statusText.text = "Folder selected successfully"
+                saveFolderSelection(path)
             }
         }
     }
@@ -56,21 +66,61 @@ class MainActivity : AppCompatActivity() {
 
         urlInput = findViewById(R.id.urlInput)
         downloadButton = findViewById(R.id.downloadButton)
+        trackButton = findViewById(R.id.trackButton)
         folderButton = findViewById(R.id.folderButton)
         statusText = findViewById(R.id.statusText)
         folderPathText = findViewById(R.id.folderPathText)
         progressBar = findViewById(R.id.progressBar)
+        trackedPlaylistsRecycler = findViewById(R.id.trackedPlaylistsRecycler)
+        noPlaylistsText = findViewById(R.id.noPlaylistsText)
         
-        // Initialize download service
+        // Initialize services
         downloadService = DownloadService()
+        playlistTracker = PlaylistTracker(this)
+        
+        // Setup progress callback
+        playlistTracker.onSyncProgress = { playlistId, isLoading, progress, progressText ->
+            runOnUiThread {
+                syncProgressMap[playlistId] = PlaylistSyncProgress(
+                    playlistId = playlistId,
+                    isLoading = isLoading,
+                    progress = progress,
+                    progressText = progressText
+                )
+                playlistAdapter.updateSyncProgress(syncProgressMap.toMap())
+            }
+        }
+        
+        // Setup RecyclerView
+        setupTrackedPlaylistsRecycler()
+        updateTrackedPlaylistsUI()
 
-        // Set default download folder
-        val defaultPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
-        selectedFolderPath = defaultPath
-        folderPathText.text = "Download folder: $defaultPath"
+        // Load saved folder or set default
+        loadSavedFolder()
 
         folderButton.setOnClickListener {
             openFolderPicker()
+        }
+
+        trackButton.setOnClickListener {
+            val url = urlInput.text.toString().trim()
+            when {
+                url.isEmpty() -> {
+                    statusText.text = "Please enter a playlist URL"
+                    Toast.makeText(this, "URL cannot be empty", Toast.LENGTH_SHORT).show()
+                }
+                !isValidYouTubeUrl(url) -> {
+                    statusText.text = "Invalid YouTube playlist URL"
+                    Toast.makeText(this, "Please enter a valid YouTube playlist URL", Toast.LENGTH_SHORT).show()
+                }
+                selectedFolderPath.isEmpty() -> {
+                    statusText.text = "Please select a download folder"
+                    Toast.makeText(this, "Please select a download folder", Toast.LENGTH_SHORT).show()
+                }
+                else -> {
+                    startTracking(url)
+                }
+            }
         }
 
         downloadButton.setOnClickListener {
@@ -175,6 +225,86 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun setupTrackedPlaylistsRecycler() {
+        playlistAdapter = TrackedPlaylistAdapter(
+            playlists = emptyList(),
+            syncProgress = emptyMap(),
+            onRemoveClick = { playlist ->
+                playlistTracker.removePlaylistFromTracking(playlist.id)
+                syncProgressMap.remove(playlist.id)
+                updateTrackedPlaylistsUI()
+                Toast.makeText(this, "Playlist removed from tracking", Toast.LENGTH_SHORT).show()
+            },
+            onSyncClick = { playlist ->
+                lifecycleScope.launch {
+                    playlistTracker.forceSyncPlaylist(playlist.id)
+                    // Progress updates will be handled by the callback
+                    updateTrackedPlaylistsUI()
+                }
+            }
+        )
+        
+        trackedPlaylistsRecycler.layoutManager = LinearLayoutManager(this)
+        trackedPlaylistsRecycler.adapter = playlistAdapter
+    }
+    
+    private fun updateTrackedPlaylistsUI() {
+        val trackedPlaylists = playlistTracker.getTrackedPlaylists()
+        
+        if (trackedPlaylists.isEmpty()) {
+            trackedPlaylistsRecycler.visibility = View.GONE
+            noPlaylistsText.visibility = View.VISIBLE
+        } else {
+            trackedPlaylistsRecycler.visibility = View.VISIBLE
+            noPlaylistsText.visibility = View.GONE
+            playlistAdapter.updatePlaylists(trackedPlaylists)
+        }
+    }
+    
+    private fun startTracking(url: String) {
+        try {
+            statusText.text = "Adding playlist to tracking and starting initial sync..."
+            val playlistId = playlistTracker.addPlaylistToTrack(url, selectedFolderPath)
+            statusText.text = "Playlist added to tracking! Initial sync started.\nFiles will be saved to: $selectedFolderPath"
+            Toast.makeText(this, "Playlist tracking started! Check folder for downloads.", Toast.LENGTH_LONG).show()
+            urlInput.text.clear()
+            updateTrackedPlaylistsUI()
+        } catch (e: Exception) {
+            statusText.text = "Error: ${e.message}"
+            Toast.makeText(this, "Failed to track playlist: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        updateTrackedPlaylistsUI()
+        playlistTracker.startSyncService()
+    }
+    
+    override fun onPause() {
+        super.onPause()
+        // Keep sync service running in background
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        playlistTracker.stopSyncService()
+    }
+
+    private fun loadSavedFolder() {
+        val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
+        selectedFolderPath = prefs.getString("selected_folder", 
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
+        ) ?: Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
+        
+        folderPathText.text = "Download folder: $selectedFolderPath"
+    }
+    
+    private fun saveFolderSelection(path: String) {
+        val prefs = getSharedPreferences("app_settings", MODE_PRIVATE)
+        prefs.edit().putString("selected_folder", path).apply()
     }
 
     private fun checkStoragePermission() {

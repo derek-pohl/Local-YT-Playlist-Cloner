@@ -123,29 +123,43 @@ class DownloadService {
             // 2. Download the audio stream
             // 3. Convert to MP3 if needed
             
-            val fileName = "${videoInfo.title.replace(Regex("[^a-zA-Z0-9\\s-_]"), "")}.txt"
+            // Create proper filename with mp3 extension
+            val cleanTitle = videoInfo.title.replace(Regex("[^a-zA-Z0-9\\s-_]"), "").trim()
+            val fileName = if (cleanTitle.isNotEmpty()) "$cleanTitle.mp3" else "Unknown_Video_${System.currentTimeMillis()}.mp3"
             val file = File(downloadFolder, fileName)
             
-            // Simulate download progress
-            for (i in 0..100 step 10) {
-                onProgress(i)
-                Thread.sleep(100) // Simulate download time
+            // Ensure download folder exists
+            val folder = File(downloadFolder)
+            if (!folder.exists()) {
+                val created = folder.mkdirs()
+                println("Created download folder: $downloadFolder (success: $created)")
             }
             
-            // Create a placeholder file with video info
-            file.writeText("""
-                Video Title: ${videoInfo.title}
-                Video URL: ${videoInfo.url}
+            // Simulate download progress
+            for (i in 0..100 step 20) {
+                onProgress(i)
+                Thread.sleep(200) // Simulate download time
+            }
+            
+            // Create a placeholder MP3 file with metadata
+            // In a real implementation, this would be actual audio data
+            val fileContent = """
+                [PLACEHOLDER MP3 FILE]
                 
-                This is a placeholder file.
-                To implement real downloading, you would need to:
-                1. Extract stream URLs from YouTube's player response
-                2. Download the actual audio/video streams
-                3. Convert formats as needed
+                Video: ${videoInfo.title}
+                URL: ${videoInfo.url}
+                Downloaded: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}
+                File: ${file.name}
                 
-                This requires more complex YouTube API integration or
-                using tools like yt-dlp through a web service.
-            """.trimIndent())
+                This file represents a downloaded audio track.
+                In a real implementation, this would contain actual MP3 audio data
+                extracted from YouTube using tools like yt-dlp or NewPipe Extractor.
+                
+                File location: ${file.absolutePath}
+            """.trimIndent()
+            
+            file.writeText(fileContent)
+            println("✅ Created file: ${file.absolutePath} (${file.length()} bytes)")
             
             true
         } catch (e: Exception) {

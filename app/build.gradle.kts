@@ -46,6 +46,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     
     // Simple web scraping approach - no external dependencies
     // Using only OkHttp and Gson which are reliable
